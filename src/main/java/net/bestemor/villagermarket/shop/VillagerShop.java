@@ -94,8 +94,8 @@ public abstract class VillagerShop {
     }
 
     /** Abstract Methods */
-    protected abstract void buyItem(int slot, Player player);
-    protected abstract void sellItem(int slot, Player player);
+    protected abstract void buyItem(int slot, Player player, boolean bulkMode);
+    protected abstract void sellItem(int slot, Player player, boolean bulkMode);
     public abstract String getModeCycle(String mode, boolean isItemTrade);
     public abstract int getAvailable(ShopItem shopItem);
 
@@ -118,7 +118,7 @@ public abstract class VillagerShop {
     }
 
     /** Runs when customer interacts with shopfront menu */
-    public void customerInteract(InventoryClickEvent event, int slot) {
+    public void customerInteract(InventoryClickEvent event, int slot, boolean bulkMode) {
         Player player = (Player) event.getWhoClicked();
         ShopItem shopItem = shopfrontHolder.getItemList().get(slot);
 
@@ -128,11 +128,11 @@ public abstract class VillagerShop {
         if (shopItem.getMode() == ItemMode.BUY_AND_SELL) {
             switch (event.getClick()) {
                 case LEFT:
-                    buyItem(slot, player);
+                    buyItem(slot, player, bulkMode);
                     shopfrontHolder.update();
                     break;
                 case RIGHT:
-                    sellItem(slot, player);
+                    sellItem(slot, player, bulkMode);
                     shopfrontHolder.update();
                     break;
             }
@@ -141,16 +141,15 @@ public abstract class VillagerShop {
 
         switch (shopItem.getMode()) {
             case BUY:
-                sellItem(slot, player);
+                sellItem(slot, player, bulkMode);
                 shopfrontHolder.update();
                 break;
             case SELL:
-                buyItem(slot, player);
+                buyItem(slot, player, bulkMode);
                 shopfrontHolder.update();
                 break;
         }
-        if (shopItem.getMode() == ItemMode.COMMAND && this instanceof AdminShop) {
-            AdminShop adminShop = (AdminShop) this;
+        if (shopItem.getMode() == ItemMode.COMMAND && this instanceof AdminShop adminShop) {
             adminShop.buyCommand(player, shopItem);
             shopfrontHolder.update();
         }
@@ -410,5 +409,31 @@ public abstract class VillagerShop {
 
     public boolean isRequirePermission() {
         return requirePermission;
+    }
+
+    protected int countItems(Player player, ItemStack reference) {
+        int total = 0;
+        for (ItemStack stack : player.getInventory().getContents()) {
+            if (stack != null && stack.isSimilar(reference)) {
+                total += stack.getAmount();
+            }
+        }
+        return total;
+    }
+
+    public int calculateMaxFitUnits(Player player, ItemStack reference, int amountPerUnit) {
+        int totalSlotsLeft = 0;
+        for (ItemStack slot : player.getInventory().getContents()) {
+            if (slot == null || slot.getType().isAir()) {
+                totalSlotsLeft += reference.getMaxStackSize();
+            } else if (slot.isSimilar(reference)) {
+                int space = reference.getMaxStackSize() - slot.getAmount();
+                if (space > 0) {
+                    totalSlotsLeft += space;
+                }
+            }
+        }
+
+        return totalSlotsLeft / amountPerUnit;
     }
 }

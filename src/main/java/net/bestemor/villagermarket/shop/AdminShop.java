@@ -32,15 +32,52 @@ public class AdminShop extends VillagerShop {
 
     /** Buys item/command from the admin shop */
     @Override
-    protected void buyItem(int slot, Player player) {
+    protected void buyItem(int slot, Player player, boolean bulkMode) {
         ShopItem shopItem = shopfrontHolder.getItemList().get(slot);
         Economy economy = plugin.getEconomy();
 
-        BigDecimal price = shopItem.getSellPrice();
+        BigDecimal pricePerUnit = shopItem.getSellPrice();
+        int amountPerUnit = shopItem.getAmount();
 
-        if (!shopItem.verifyPurchase(player, ItemMode.SELL)) {
+        int finalUnits = 1;
+
+        if (bulkMode) {
+            if (shopItem.isItemTrade()) {
+                int tradeHas = countItems(player, shopItem.getItemTrade());
+                int neededPerUnit = shopItem.getItemTradeAmount();
+
+                finalUnits = tradeHas / neededPerUnit;
+                if (finalUnits < 1) {
+                    player.sendMessage("§cYou don’t have enough trade items to buy more than 0 units!");
+                    return;
+                }
+            } else {
+                double playerBalance = economy.getBalance(player);
+                double costPerUnit = pricePerUnit.doubleValue();
+
+                int affordUnits = (costPerUnit <= 0.0)
+                        ? Integer.MAX_VALUE
+                        : (int) Math.floor(playerBalance / costPerUnit);
+
+                int fitUnits = calculateMaxFitUnits(player, shopItem.getRawItem(), amountPerUnit);
+
+                finalUnits = Math.min(affordUnits, fitUnits);
+
+                if (finalUnits < 1) {
+                    player.sendMessage("§cYou cannot afford or fit even 1 more unit of this item!");
+                    return;
+                }
+            }
+        }
+
+
+        if (!shopItem.verifyPurchase(player, ItemMode.SELL, finalUnits)) {
             return;
         }
+
+        int finalItemAmount = amountPerUnit * finalUnits;
+        BigDecimal finalPrice = pricePerUnit.multiply(BigDecimal.valueOf(finalUnits));
+
         CurrencyBuilder message = ConfigManager.getCurrencyBuilder("messages.bought_item_as_customer")
                 .replace("%amount%", String.valueOf(shopItem.getAmount()))
                 .replace("%item%", shopItem.getItemName())
@@ -50,7 +87,7 @@ public class AdminShop extends VillagerShop {
         if (shopItem.isItemTrade()) {
             message.replace("%price%", shopItem.getItemTradeAmount() + "x " + shopItem.getItemTradeName());
         } else {
-            message.replaceCurrency("%price%", price);
+            message.replaceCurrency("%price%", finalPrice);
         }
         player.sendMessage(message.build());
 
@@ -63,13 +100,13 @@ public class AdminShop extends VillagerShop {
             removeItems(player.getInventory(), shopItem.getItemTrade(), shopItem.getItemTradeAmount());
         } else {
 
-            economy.withdrawPlayer(player, price.doubleValue());
+            economy.withdrawPlayer(player, finalPrice.doubleValue());
             BigDecimal left = BigDecimal.valueOf(economy.getBalance(player));
             player.sendMessage(ConfigManager.getCurrencyBuilder("messages.money_left").replaceCurrency("%amount%", left).addPrefix().build());
-            shopStats.addEarned(price.doubleValue());
+            shopStats.addEarned(finalPrice.doubleValue());
         }
 
-        shopStats.addSold(shopItem.getAmount());
+        shopStats.addSold(finalItemAmount);
         giveShopItem(player, shopItem);
         shopItem.incrementPlayerTrades(player);
         shopItem.incrementServerTrades();
@@ -79,35 +116,50 @@ public class AdminShop extends VillagerShop {
 
         player.playSound(player.getLocation(), ConfigManager.getSound("sounds.buy_item"), 1, 1);
 
-        VMPlugin.log.add(new Date() + ": " + player.getName() + " bought " + shopItem.getAmount() + "x " + shopItem.getType() + " from Admin Shop " + "(" + price.toPlainString() + ")");
+        VMPlugin.log.add(new Date() + ": " + player.getName() + " bought " + finalItemAmount + "x " + shopItem.getType() + " from Admin Shop " + "(" + finalPrice.toPlainString() + ")");
 
     }
 
     /** Sells item to the admin shop */
     @Override
-    protected void sellItem(int slot, Player player) {
+    protected void sellItem(int slot, Player player, boolean bulkMode) {
         ShopItem shopItem = shopfrontHolder.getItemList().get(slot);
         Economy economy = plugin.getEconomy();
 
-        int amount = shopItem.getAmount();
-        BigDecimal price = shopItem.getBuyPrice();
+        int amountPerUnit = shopItem.getAmount();
+        BigDecimal pricePerUnit = shopItem.getBuyPrice();
 
-        if (!shopItem.verifyPurchase(player, ItemMode.BUY)) {
+        int finalUnits = 1;
+
+        if (bulkMode) {
+            int inInventory = countItems(player, shopItem.getRawItem());
+
+            finalUnits = inInventory / amountPerUnit;
+            if (finalUnits < 1) {
+                player.sendMessage("§cYou don't have enough items to sell in bulk!");
+                return;
+            }
+        }
+
+        if (!shopItem.verifyPurchase(player, ItemMode.BUY, finalUnits)) {
             return;
         }
 
+        int finalItemAmount = amountPerUnit * finalUnits;
+        BigDecimal finalPrice = pricePerUnit.multiply(BigDecimal.valueOf(finalUnits));
+
         player.sendMessage(ConfigManager.getCurrencyBuilder("messages.sold_item_as_customer")
                 .replace("%amount%", String.valueOf(shopItem.getAmount()))
-                .replaceCurrency("%price%", price)
+                .replaceCurrency("%price%", finalPrice)
                 .replace("%item%", shopItem.getItemName())
                 .replace("%shop%", getShopName()).build());
 
-        economy.depositPlayer(player, price.doubleValue());
+        economy.depositPlayer(player, finalPrice.doubleValue());
         removeItems(player.getInventory(), shopItem.getRawItem(), shopItem.getAmount());
         shopItem.incrementPlayerTrades(player);
         shopItem.incrementServerTrades();
-        shopStats.addBought(amount);
-        shopStats.addSpent(price.doubleValue());
+        shopStats.addBought(finalItemAmount);
+        shopStats.addSpent(finalPrice.doubleValue());
 
         SellShopItemsEvent sellShopItemsEvent = new SellShopItemsEvent(player,this, shopItem);
         Bukkit.getPluginManager().callEvent(sellShopItemsEvent);
@@ -115,8 +167,8 @@ public class AdminShop extends VillagerShop {
         player.playSound(player.getLocation(), ConfigManager.getSound("sounds.sell_item"), 0.5f, 1);
 
         String currency = config.getString("currency");
-        String valueCurrency = (config.getBoolean("currency_before") ? currency + price : price + currency);
-        VMPlugin.log.add(new Date() + ": " + player.getName() + " sold " + amount + "x " + shopItem.getType() + " to: " + entityUUID + " (" + valueCurrency + ")");
+        String valueCurrency = (config.getBoolean("currency_before") ? currency + finalPrice : finalPrice + currency);
+        VMPlugin.log.add(new Date() + ": " + player.getName() + " sold " + finalItemAmount + "x " + shopItem.getType() + " to: " + entityUUID + " (" + valueCurrency + ")");
     }
 
     @Override

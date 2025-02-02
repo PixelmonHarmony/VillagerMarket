@@ -314,45 +314,131 @@ public class ShopItem {
         return getItemName(item);
     }
 
-    public boolean verifyPurchase(Player player, ItemMode verifyMode) {
-        return verifyPurchase(player, verifyMode, null,null);
+    public boolean verifyPurchase(Player player, ItemMode verifyMode, int finaUnits) {
+        return verifyPurchase(player, verifyMode, null,null,finaUnits);
     }
-    public boolean verifyPurchase(Player customer, ItemMode verifyMode, OfflinePlayer owner, StorageHolder storage) {
 
+    /**
+     * Verifies if the transaction for `quantity` units is valid under the given mode.
+     *
+     * @param customer    The player performing the transaction
+     * @param verifyMode  The ItemMode (SELL = shop->player, BUY = player->shop)
+     * @param owner       The OfflinePlayer owner of the shop (null if AdminShop)
+     * @param storage     The shop's StorageHolder (null if AdminShop or not relevant)
+     * @param quantity    How many "units" of this shop item are being transacted
+     * @return            true if the transaction is allowed; false otherwise
+     */
+    public boolean verifyPurchase(Player customer, ItemMode verifyMode, OfflinePlayer owner, StorageHolder storage, int quantity) {
+
+        // 1) If the 'owner' is the same as the 'customer', deny self-transactions.
         if (owner != null && customer.getUniqueId().equals(owner.getUniqueId())) {
-            customer.sendMessage(ConfigManager.getMessage("messages.cannot_" + (verifyMode == SELL ?  "buy_from" :"sell_to") + "_yourself"));
+            customer.sendMessage(ConfigManager.getMessage(
+                    "messages.cannot_" + (verifyMode == SELL ? "buy_from" : "sell_to") + "_yourself"));
             return false;
         }
+
         Economy economy = plugin.getEconomy();
-        if (verifyMode == SELL && isItemTrade() && getAmountInventory(itemTrade, customer.getInventory()) < itemTradeAmount) {
-            customer.sendMessage(ConfigManager.getMessage("messages.not_enough_in_inventory"));
+
+        // We'll calculate total items and total price based on the requested `quantity`.
+
+        // "Single unit" = getAmount() items.
+        // If the transaction is "bulk," we do `totalItems = getAmount() * quantity`.
+        // Similarly, total price = getSellPrice() or getBuyPrice() * quantity,
+        // if using currency (not itemTrade).
+
+        int singleUnitItems = getAmount();
+        int totalItems = singleUnitItems * quantity;
+
+        // Sell price from the shop's perspective => what the customer pays (if verifyMode == SELL)
+        // or what the shop pays (if verifyMode == BUY). We'll compute it if not an itemTrade.
+        // e.g. "shop sells item => player pays getSellPrice()"
+        //      "shop buys item => player gets getBuyPrice()"
+        // Because of how the code is structured:
+        //    verifyMode == SELL => shopItem.getSellPrice() is cost for 1 "unit"
+        //    verifyMode == BUY  => shopItem.getBuyPrice() is cost for 1 "unit"
+        BigDecimal unitPrice = (verifyMode == SELL ? getSellPrice() : getBuyPrice());
+        BigDecimal totalPrice = unitPrice.multiply(BigDecimal.valueOf(quantity));
+
+        // 2) If the shop is "SELL" mode (shop->player), but itemTrade != null =>
+        //    it’s an item-for-item trade. Must check the player's inventory
+        //    for enough itemTrade items * itemTradeAmount * quantity.
+        if (verifyMode == SELL && isItemTrade()) {
+            int neededTradeItems = getItemTradeAmount() * quantity;
+            if (getAmountInventory(itemTrade, customer.getInventory()) < neededTradeItems) {
+                customer.sendMessage(ConfigManager.getMessage("messages.not_enough_in_inventory"));
+                return false;
+            }
+        }
+
+        // 3) If the shop is "SELL" mode (shop->player) with a physical storage =>
+        //    check if the shop has enough items.
+        //    i.e. 'storage.getAmount(...) < totalItems'
+        //    This only applies if itemTrade == null (meaning the shop sells items for currency).
+        if (verifyMode == SELL && !isItemTrade() && storage != null) {
+            if (storage.getAmount(item.clone()) < totalItems) {
+                customer.sendMessage(ConfigManager.getMessage("messages.not_enough_stock"));
+                return false;
+            }
+        }
+
+        // 4) If the shop is "SELL" mode => the player must pay the shop (no itemTrade).
+        //    So check if the customer has enough money for totalPrice.
+        if (verifyMode == SELL && !isItemTrade() && itemTrade == null) {
+            if (economy.getBalance(customer) < totalPrice.doubleValue()) {
+                customer.sendMessage(ConfigManager.getMessage("messages.not_enough_money"));
+                return false;
+            }
+        }
+
+        // 5) If the shop is "BUY" mode => the shop pays the player.
+        //    If there's an owner, check if the owner has enough money to cover totalPrice.
+        if (verifyMode == BUY && owner != null && !isItemTrade() && itemTrade == null) {
+            if (economy.getBalance(owner) < totalPrice.doubleValue()) {
+                customer.sendMessage(ConfigManager.getMessage("messages.owner_not_enough_money"));
+                return false;
+            }
+        }
+
+        // 6) If the shop is "BUY" mode => player sells items to the shop.
+        //    Check if the player has at least `totalItems` in their inventory.
+        //    (the code base uses 'getAmountInventory(item.clone(), ...).')
+        if (verifyMode == BUY) {
+            if (getAmountInventory(item.clone(), customer.getInventory()) < totalItems) {
+                customer.sendMessage(ConfigManager.getMessage("messages.not_enough_in_inventory"));
+                return false;
+            }
+        }
+
+        // 7) Check "available" (some limit on how many more items can be bought or sold).
+        //    If 'available != -1' => there's a limit.
+        //    If 'totalItems' > 'available', transaction fails.
+        //    For itemTrade, the code lumps them with "verifyMode == BUY" check,
+        //    so we adapt it:
+        if ((verifyMode == BUY || isItemTrade()) && available != -1 && totalItems > available) {
+            // isItemTrade() => this treat it as "shop sells for itemTrade" or "shop buys with itemTrade"
+            // It’s a bit ambiguous, but we follow the original logic.
+            customer.sendMessage(ConfigManager.getMessage("messages.reached_" +
+                    (isItemTrade() ? "buy" : "sell") + "_limit"));
             return false;
         }
-        if (!isItemTrade() && verifyMode == SELL && storage != null && storage.getAmount(item.clone()) < getAmount()) {
-            customer.sendMessage(ConfigManager.getMessage("messages.not_enough_stock"));
-            return false;
-        }
-        if (!isItemTrade() && verifyMode == SELL && itemTrade == null && economy.getBalance(customer) < getSellPrice().doubleValue()) {
-            customer.sendMessage(ConfigManager.getMessage("messages.not_enough_money"));
-            return false;
-        }
-        if (!isItemTrade() && verifyMode == BUY && owner != null && itemTrade == null && economy.getBalance(owner) < getBuyPrice().doubleValue()) {
-            customer.sendMessage(ConfigManager.getMessage("messages.owner_not_enough_money"));
-            return false;
-        }
-        if (verifyMode == ItemMode.BUY && getAmountInventory(item.clone(), customer.getInventory()) < getAmount()) {
-            customer.sendMessage(ConfigManager.getMessage("messages.not_enough_in_inventory"));
-            return false;
-        }
-        if ((verifyMode == BUY || isItemTrade()) && available != -1 && getAmount() > available) {
-            customer.sendMessage(ConfigManager.getMessage("messages.reached_" + (isItemTrade() ? "buy" : "sell") + "_limit"));
-            return false;
-        }
+
+        // 8) If it's an AdminShop with a limit set, check if the limit is reached
+        //    for 'serverTrades' or 'playerLimits' (depends on limitMode).
+        //    e.g. if limit is 100 but you're about to do 10 more trades, do we interpret
+        //    that as 'serverTrades + quantity >= limit'?
+        //    We'll assume yes.
         boolean bypass = customer.hasPermission("villagermarket.bypass_limit");
-        if (isAdmin && !bypass && limit > 0 && ((limitMode == LimitMode.SERVER && serverTrades >= limit) || (limitMode == LimitMode.PLAYER && getPlayerLimit(customer) >= limit))) {
-            customer.sendMessage(ConfigManager.getMessage("messages.reached_" + (verifyMode == BUY ? "sell" : "buy") + "_limit"));
-            return false;
+        if (isAdmin && !bypass && limit > 0) {
+            int tradesSoFar = (limitMode == LimitMode.SERVER ? serverTrades : getPlayerLimit(customer));
+            // If by adding 'quantity' we exceed the limit, fail
+            if (tradesSoFar + quantity > limit) {
+                customer.sendMessage(ConfigManager.getMessage("messages.reached_" +
+                        (verifyMode == BUY ? "sell" : "buy") + "_limit"));
+                return false;
+            }
         }
+
+        // If none of the checks failed, the transaction is valid
         return true;
     }
 

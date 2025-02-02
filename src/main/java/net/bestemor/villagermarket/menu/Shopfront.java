@@ -317,7 +317,9 @@ public class Shopfront {
                         
                         break;
                     case CUSTOMER:
-                        shop.customerInteract(event, event.getSlot() + page * 45);
+                        var clickType = event.getClick();
+
+                        shop.customerInteract(event, event.getSlot() + page * 45, clickType == ClickType.SHIFT_LEFT || clickType == ClickType.SHIFT_RIGHT);
                         break;
                     case DETAILED:
                         if (event.isCancelled() && event.getCurrentItem() != null) {
