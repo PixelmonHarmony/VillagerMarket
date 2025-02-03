@@ -149,13 +149,13 @@ public class AdminShop extends VillagerShop {
         BigDecimal finalPrice = pricePerUnit.multiply(BigDecimal.valueOf(finalUnits));
 
         player.sendMessage(ConfigManager.getCurrencyBuilder("messages.sold_item_as_customer")
-                .replace("%amount%", String.valueOf(shopItem.getAmount()))
+                .replace("%amount%", String.valueOf(finalItemAmount))
                 .replaceCurrency("%price%", finalPrice)
                 .replace("%item%", shopItem.getItemName())
                 .replace("%shop%", getShopName()).build());
 
         economy.depositPlayer(player, finalPrice.doubleValue());
-        removeItems(player.getInventory(), shopItem.getRawItem(), shopItem.getAmount());
+        removeItems(player.getInventory(), shopItem.getRawItem(), finalItemAmount);
         shopItem.incrementPlayerTrades(player);
         shopItem.incrementServerTrades();
         shopStats.addBought(finalItemAmount);

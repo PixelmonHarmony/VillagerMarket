@@ -319,7 +319,7 @@ public class Shopfront {
                     case CUSTOMER:
                         var clickType = event.getClick();
 
-                        shop.customerInteract(event, event.getSlot() + page * 45, clickType == ClickType.SHIFT_LEFT || clickType == ClickType.SHIFT_RIGHT);
+                        shop.customerInteract(event, event.getSlot() + page * 45);
                         break;
                     case DETAILED:
                         if (event.isCancelled() && event.getCurrentItem() != null) {

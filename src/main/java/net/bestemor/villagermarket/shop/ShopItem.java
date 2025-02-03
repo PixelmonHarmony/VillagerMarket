@@ -432,8 +432,7 @@ public class ShopItem {
             int tradesSoFar = (limitMode == LimitMode.SERVER ? serverTrades : getPlayerLimit(customer));
             // If by adding 'quantity' we exceed the limit, fail
             if (tradesSoFar + quantity > limit) {
-                customer.sendMessage(ConfigManager.getMessage("messages.reached_" +
-                        (verifyMode == BUY ? "sell" : "buy") + "_limit"));
+                customer.sendMessage(ConfigManager.getMessage("messages.reached_" + (verifyMode == BUY ? "sell" : "buy") + "_limit"));
                 return false;
             }
         }
